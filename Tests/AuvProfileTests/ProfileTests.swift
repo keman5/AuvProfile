@@ -4,6 +4,33 @@ import XCTest
 @testable import AuvProfile
 
 final class ProfileTests: XCTestCase {
+    @MainActor
+    func testTabFocusRequiresKeyboardNavigation() throws {
+        let lifecycle = WindowLifecycle()
+        func tab(_ modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: 0, context: nil,
+                characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48
+            ))
+        }
+
+        XCTAssertFalse(lifecycle.showsTabFocus)
+        lifecycle.updateTabFocus(for: try tab(.command))
+        XCTAssertFalse(lifecycle.showsTabFocus)
+        lifecycle.updateTabFocus(for: try tab(.shift))
+        XCTAssertTrue(lifecycle.showsTabFocus)
+
+        let click = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        lifecycle.updateTabFocus(for: click)
+        XCTAssertFalse(lifecycle.showsTabFocus)
+        lifecycle.updateTabFocus(for: try tab())
+        XCTAssertTrue(lifecycle.showsTabFocus)
+    }
+
     func testCodexAccountIDSurvivesTokenRefresh() throws {
         let claims = Data(#"{"email":"sample@example.test","sub":"synthetic-user"}"#.utf8).base64EncodedString()
         func auth(_ access: String, _ account: String) throws -> CodexAccount {
@@ -62,6 +89,59 @@ final class ProfileTests: XCTestCase {
         let result = try helper.call("update", source: source, provider: provider)
         let updated = try helper.call("inspect", source: XCTUnwrap(result.text))
         XCTAssertEqual(updated.providers.first, provider)
+        let deleted = try helper.call("delete", source: XCTUnwrap(result.text), id: "local")
+        let afterDelete = try helper.call("inspect", source: XCTUnwrap(deleted.text))
+        XCTAssertTrue(afterDelete.providers.isEmpty)
+    }
+
+    func testDirectAPIKeyAccountDataIsRecognized() throws {
+        let data = try CodexAccount.apiKeyData("sk-test-1234567890")
+        let account = try XCTUnwrap(CodexAccount(data))
+        XCTAssertTrue(account.key.hasPrefix("api-"))
+        XCTAssertThrowsError(try CodexAccount.apiKeyData("   "))
+    }
+
+    func testManagedAccountValidationForClaudeAndAntigravity() throws {
+        let claude = try ManagedAccount(
+            client: .claude,
+            name: "Claude Pro",
+            apiKey: "sk-ant-test-key",
+            baseUrl: "https://api.anthropic.com",
+            model: "claude-sonnet-4-20250514"
+        ).validated()
+        XCTAssertTrue(claude.id.hasPrefix("claude-"))
+        XCTAssertEqual(claude.name, "Claude Pro")
+        XCTAssertTrue(claude.summaryDetail.contains("api.anthropic.com"))
+
+        let agy = try ManagedAccount(
+            client: .antigravity,
+            name: "",
+            apiKey: "AIzaSyTest1234",
+            project: "my-gcp-project"
+        ).validated()
+        XCTAssertTrue(agy.id.hasPrefix("antigravity-"))
+        XCTAssertFalse(agy.name.isEmpty)
+        XCTAssertTrue(agy.summaryDetail.contains("my-gcp-project"))
+
+        XCTAssertThrowsError(try ManagedAccount(client: .claude, name: "Bad", apiKey: " ").validated())
+        XCTAssertThrowsError(try ManagedAccount(client: .claude, name: "Bad URL", apiKey: "sk-123", baseUrl: "https://user:pass@example.com").validated())
+    }
+
+    func testUnifiedProfileModelAndChatGPTRename() {
+        XCTAssertEqual(Client.codex.rawValue, "ChatGPT")
+        let profile = Profile(
+            client: .codex,
+            name: "OpenRouter 方案",
+            authMode: .apiKey,
+            apiKey: "sk-12345678",
+            providerId: "openrouter",
+            providerName: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            model: "deepseek-chat"
+        )
+        XCTAssertEqual(profile.accountBadge, "API Key · 5678")
+        XCTAssertEqual(profile.providerBadge, "OpenRouter")
+        XCTAssertEqual(profile.cliBadge, "deepseek-chat")
     }
 
     func testAppIconGeneratesIconset() throws {

@@ -17,10 +17,10 @@ AuvProfile 是一个本地 macOS 应用。可以在菜单栏快速打开或切�
 ```bash
 git clone https://github.com/keman5/AuvProfile.git
 cd AuvProfile
-./build.sh
+./scripts/build.sh
 ```
 
-脚本运行测试并将应用安装到 `/Applications/AuvProfile.app`。仅运行测试可用 `./build.sh --test`。
+脚本运行测试并将应用安装到 `/Applications/AuvProfile.app`。仅运行测试可用 `./scripts/build.sh --test`。
 
 ## 使用
 

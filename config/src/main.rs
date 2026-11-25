@@ -67,6 +67,7 @@ enum Operation {
     Inspect,
     Activate { id: Option<String> },
     Update { provider: Provider },
+    Delete { id: Option<String> },
 }
 
 #[derive(Deserialize)]
@@ -162,6 +163,30 @@ fn run(request: Request) -> Result<Response, &'static str> {
                 ..Response::default()
             })
         }
+        Operation::Delete { id } => {
+            let id = id.as_deref().map(str::trim).filter(|s| !s.is_empty()).ok_or("A provider identifier is required")?;
+            if doc_string_key(id) {
+                return Err("Built-in provider identifiers are reserved");
+            }
+            let removed = doc
+                .get_mut("model_providers")
+                .and_then(Item::as_table_like_mut)
+                .and_then(|providers| providers.remove(id));
+            if removed.is_none() {
+                return Err("Provider no longer exists");
+            }
+            let was_active = doc
+                .get("model_provider")
+                .and_then(Item::as_str)
+                .is_some_and(|active| active == id);
+            if was_active {
+                set(doc.as_table_mut(), "model_provider", None);
+            }
+            Ok(Response {
+                text: Some(doc.to_string()),
+                ..Response::default()
+            })
+        }
     }
 }
 
@@ -221,7 +246,7 @@ mod tests {
         .unwrap();
         assert!(activated.contains("model_provider = \"local\" # current"));
         let parsed = run(Request {
-            source: activated,
+            source: activated.clone(),
             operation: Operation::Inspect,
         })
         .unwrap();
@@ -230,5 +255,21 @@ mod tests {
             Some("synthetic-token")
         );
         assert_eq!(parsed.profiles, ["work"]);
+        let deleted = run(Request {
+            source: activated,
+            operation: Operation::Delete {
+                id: Some("local".into()),
+            },
+        })
+        .unwrap()
+        .text
+        .unwrap();
+        let after_delete = run(Request {
+            source: deleted,
+            operation: Operation::Inspect,
+        })
+        .unwrap();
+        assert!(after_delete.providers.is_empty());
+        assert_eq!(after_delete.active, None);
     }
 }

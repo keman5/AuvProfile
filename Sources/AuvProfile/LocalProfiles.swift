@@ -9,15 +9,23 @@ struct ProfileError: LocalizedError {
 }
 
 enum Client: String, CaseIterable, Identifiable, Codable {
-    case codex = "Codex"
+    case codex = "ChatGPT"
     case claude = "Claude"
     case antigravity = "Antigravity"
     case web = "网页账号"
 
     var id: String { rawValue }
+    var storageKey: String {
+        switch self {
+        case .codex: "codex"
+        case .claude: "claude"
+        case .antigravity: "antigravity"
+        case .web: "web"
+        }
+    }
     var icon: String {
         switch self {
-        case .codex: "chevron.left.forwardslash.chevron.right"
+        case .codex: "bubble.left.and.bubble.right"
         case .claude: "sparkle"
         case .antigravity: "triangle"
         case .web: "globe"
@@ -26,17 +34,119 @@ enum Client: String, CaseIterable, Identifiable, Codable {
 }
 
 enum ProfileKind: String, Codable {
-    case codexAccount, codexConfig, codexOverlay, codexProvider, claudeDirectory, claudeDesktop, antigravity, antigravityCLI, browser
+    case unified
+    case browser
 }
 
-struct Profile: Identifiable, Hashable {
+enum AuthMode: String, Codable, CaseIterable, Identifiable {
+    case oauth = "OAuth / 客户端登录"
+    case apiKey = "API Key / Token"
+
+    var id: String { rawValue }
+}
+
+struct OAuthAccountOption: Identifiable, Hashable {
     let id: String
-    let kind: ProfileKind
-    let name: String
-    let detail: String
+    let label: String
+}
+
+struct Profile: Identifiable, Codable, Hashable {
+    var id: String = UUID().uuidString
+    var client: Client = .codex
+    var kind: ProfileKind = .unified
+    var name: String
+    var detail: String = ""
+    var active: Bool = false
+
+    // 1. 登录账号 (Login Account)
+    var authMode: AuthMode = .oauth
+    var oauthAccountKey: String? = nil
+    var oauthAccountLabel: String? = nil
+    var apiKey: String = ""
+
+    // 2. 模型服务商 (Model Provider)
+    var providerId: String = "openai"
+    var providerName: String = "OpenAI"
+    var baseUrl: String = ""
+    var wireApi: String = "responses"
+    var envKey: String = ""
+    var bearerToken: String = ""
+    var requiresOpenaiAuth: Bool = false
+    var model: String = ""
+    var cloudProject: String = ""
+
+    // 3. CLI 启动配置 (CLI Launch & Config File)
+    var workingDirectoryPath: String = ""
+    var extraCLIArgs: String = ""
+    var configText: String = ""
+    var profileDirectoryPath: String? = nil
+
+    // 浏览器 Profile 专用
     var path: URL? = nil
     var argument: String? = nil
-    var active = false
+
+    var accountBadge: String {
+        switch authMode {
+        case .oauth:
+            if let label = oauthAccountLabel, !label.isEmpty {
+                return label
+            }
+            switch client {
+            case .codex: return "ChatGPT OAuth"
+            case .claude: return "Claude OAuth"
+            case .antigravity: return "Google OAuth"
+            case .web: return detail
+            }
+        case .apiKey:
+            let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { return "API Key (未填写)" }
+            return "API Key · " + String(trimmed.suffix(4))
+        }
+    }
+
+    var providerBadge: String {
+        switch client {
+        case .codex:
+            if providerId == "openai" || providerId.isEmpty {
+                return "OpenAI 官方"
+            }
+            if !providerName.isEmpty { return providerName }
+            if let host = URL(string: baseUrl)?.host() { return host }
+            return providerId
+        case .claude:
+            if let host = URL(string: baseUrl)?.host(), !baseUrl.isEmpty {
+                return host
+            }
+            return "Anthropic 官方"
+        case .antigravity:
+            if let host = URL(string: baseUrl)?.host(), !baseUrl.isEmpty {
+                return host
+            }
+            if !cloudProject.isEmpty { return "Vertex · \(cloudProject)" }
+            return "Google Gemini"
+        case .web:
+            return detail
+        }
+    }
+
+    var cliBadge: String {
+        var parts: [String] = []
+        if !model.isEmpty {
+            parts.append(model)
+        }
+        if !extraCLIArgs.isEmpty {
+            parts.append(extraCLIArgs)
+        }
+        if parts.isEmpty {
+            switch client {
+            case .codex: return "config.toml"
+            case .claude: return "settings.json"
+            case .antigravity: return "settings.json"
+            case .web: return argument ?? "Default"
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
 }
 
 struct Provider: Codable, Identifiable, Equatable {
@@ -55,13 +165,72 @@ struct Provider: Codable, Identifiable, Equatable {
             throw ProfileError("请输入有效的服务商 ID。")
         }
         if copy.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false { copy.name = copy.id }
-        if let base = baseUrl, !base.isEmpty {
+        if let base = baseUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !base.isEmpty {
             guard let url = URL(string: base), let scheme = url.scheme?.lowercased(),
                   ["http", "https"].contains(scheme), url.host() != nil, url.user() == nil, url.password() == nil else {
                 throw ProfileError("Base URL 需要是有效的 HTTP 或 HTTPS 地址，且地址中不能包含登录凭据。")
             }
+            copy.baseUrl = base
+        } else {
+            copy.baseUrl = nil
         }
         return copy
+    }
+}
+
+struct ManagedAccount: Codable, Identifiable, Equatable {
+    var id = ""
+    var client: Client
+    var name: String
+    var apiKey: String
+    var baseUrl: String?
+    var model: String?
+    var project: String?
+
+    func validated() throws -> Self {
+        var copy = self
+        copy.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.baseUrl = baseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.project = project?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if copy.baseUrl?.isEmpty == true { copy.baseUrl = nil }
+        if copy.model?.isEmpty == true { copy.model = nil }
+        if copy.project?.isEmpty == true { copy.project = nil }
+
+        guard !copy.apiKey.isEmpty,
+              !copy.apiKey.unicodeScalars.contains(where: CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains) else {
+            throw ProfileError("请输入有效的 API Key 或 Auth Token（不能包含空格或换行）。")
+        }
+        if let base = copy.baseUrl {
+            guard let url = URL(string: base), let scheme = url.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme), url.host() != nil, url.user() == nil, url.password() == nil else {
+                throw ProfileError("Base URL 需要是有效的 HTTP 或 HTTPS 地址，且不能包含登录凭据。")
+            }
+        }
+        if copy.id.isEmpty {
+            let fingerprint = [copy.client.storageKey, copy.apiKey, copy.baseUrl ?? "", copy.project ?? ""].joined(separator: "|")
+            copy.id = "\(copy.client.storageKey)-" + String(hash(fingerprint).prefix(12))
+        }
+        if copy.name.isEmpty {
+            let host = copy.baseUrl.flatMap { URL(string: $0)?.host() }
+            let suffix = String(copy.apiKey.suffix(4))
+            copy.name = (host ?? "\(copy.client.rawValue) API") + " · " + suffix
+        }
+        return copy
+    }
+
+    var summaryDetail: String {
+        var parts: [String] = []
+        if let host = baseUrl.flatMap({ URL(string: $0)?.host() }) {
+            parts.append(host)
+        } else {
+            parts.append(client == .claude ? "Anthropic API" : "Gemini / Google API")
+        }
+        if let model, !model.isEmpty { parts.append(model) }
+        if let project, !project.isEmpty { parts.append(project) }
+        parts.append("钥匙串")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -89,7 +258,7 @@ struct CodexConfigHelper {
         }
         #endif
         guard FileManager.default.isExecutableFile(atPath: helper.path) else {
-            throw ProfileError("找不到配置解析组件。请通过 build.sh 构建应用。")
+            throw ProfileError("找不到配置解析组件。请通过 ./scripts/build.sh 构建应用。")
         }
         let request = Request(operation: operation, source: source, id: id, provider: provider)
         let encoder = JSONEncoder()
@@ -114,7 +283,7 @@ struct CodexConfigHelper {
         let result = stdout.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            throw ProfileError("Codex 配置无法解析，或该服务商已不存在。请检查 config.toml。")
+            throw ProfileError("配置无法解析，请检查 TOML 语法是否正确。")
         }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -152,6 +321,18 @@ struct CodexAccount: Equatable {
             return nil
         }
     }
+
+    static func apiKeyData(_ rawKey: String) throws -> Data {
+        let trimmed = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.unicodeScalars.contains(where: CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains) else {
+            throw ProfileError("请输入有效的 OpenAI API Key（不能包含空格或换行）。")
+        }
+        return try JSONSerialization.data(
+            withJSONObject: ["auth_mode": "apikey", "OPENAI_API_KEY": trimmed],
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
 }
 
 func restoreCodexAuth(_ target: Data, to file: URL, saveCurrent: (CodexAccount, Data) throws -> Void) throws {
@@ -159,7 +340,7 @@ func restoreCodexAuth(_ target: Data, to file: URL, saveCurrent: (CodexAccount, 
     let original = try PrivateFiles.read(file)
     if let original {
         guard let account = CodexAccount(original) else {
-            throw ProfileError("当前 auth.json 无法识别，已保留文件。请先通过 Codex 处理当前登录。")
+            throw ProfileError("当前 auth.json 无法识别，已保留文件。请先通过客户端处理当前登录。")
         }
         guard account.key != incoming.key else { return }
         try saveCurrent(account, original)

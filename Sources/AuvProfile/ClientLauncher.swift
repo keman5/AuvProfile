@@ -8,6 +8,7 @@ final class ClientLauncher {
         let executable: URL
         var args: [String] = []
         var environment: [String: String] = [:]
+        var workingDirectory: URL? = nil
     }
 
     private let support: URL
@@ -18,17 +19,50 @@ final class ClientLauncher {
         self.home = home
     }
 
+    var searchPaths: [String] {
+        var paths: [String] = [
+            home.appending(path: ".local/bin").path,
+            home.appending(path: "Library/pnpm/bin").path,
+            home.appending(path: "Library/pnpm").path,
+            home.appending(path: ".bun/bin").path,
+            home.appending(path: ".cargo/bin").path,
+            home.appending(path: ".npm-global/bin").path,
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+        ]
+        let nvmRoot = home.appending(path: ".nvm/versions/node")
+        if let nodes = try? FileManager.default.contentsOfDirectory(at: nvmRoot, includingPropertiesForKeys: nil) {
+            let sorted = nodes.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedDescending }
+            paths.append(contentsOf: sorted.map { $0.appending(path: "bin").path })
+        }
+        let envPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        for p in envPaths where !paths.contains(p) {
+            paths.append(p)
+        }
+        return paths
+    }
+
     func executable(_ names: [String]) -> URL? {
-        let search = [home.appending(path: ".local/bin").path, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-            + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        let search = searchPaths
         return names.lazy.flatMap { name in search.map { URL(fileURLWithPath: $0).appending(path: name) } }
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     func codexExecutable() -> URL? {
         executable(["codex"])
-            ?? desktop(.codex)?.appending(path: "Contents/Resources/codex")
-                .existingExecutable
+            ?? desktop(.codex)?.appending(path: "Contents/Resources/codex").existingExecutable
+    }
+
+    func claudeExecutable() -> URL? {
+        executable(["claude"])
+    }
+
+    func antigravityExecutable() -> URL? {
+        executable(["agy", "antigravity"])
+            ?? desktop(.antigravity)?.appending(path: "Contents/Resources/app/bin/agy").existingExecutable
+            ?? desktop(.antigravity)?.appending(path: "Contents/Resources/bin/agy").existingExecutable
     }
 
     func desktop(_ client: Client) -> URL? {
@@ -36,7 +70,7 @@ final class ClientLauncher {
         let names: [String]
         switch client {
         case .codex:
-            identifiers = ["com.openai.codex"]
+            identifiers = ["com.openai.codex", "com.openai.chat"]
             names = ["Codex", "ChatGPT"]
         case .claude:
             identifiers = ["com.anthropic.claudefordesktop"]
@@ -70,8 +104,6 @@ final class ClientLauncher {
     }
 
     func openBrowser(_ url: URL, in browser: URL, profile: String) async throws {
-        // open --args only forwards arguments to a new process. Chrome and Edge forward their own
-        // invocations to the matching running browser, including the explicit profile directory.
         guard let executable = Bundle(url: browser)?.executableURL else { throw ProfileError("找不到浏览器执行文件。") }
         let command = Process()
         command.executableURL = executable
@@ -101,11 +133,17 @@ final class ClientLauncher {
         let launchID = UUID().uuidString
         let script = folder.appending(path: launchID + ".command")
         let arguments = command.args.map(shellQuote).joined(separator: " ")
-        let environment = command.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\(shellQuote($0.value))" }.joined(separator: " ")
+        var envMap = command.environment
+        let pathValue = searchPaths.joined(separator: ":")
+        if envMap["PATH"] == nil {
+            envMap["PATH"] = pathValue
+        }
+        let environment = envMap.sorted { $0.key < $1.key }.map { "\($0.key)=\(shellQuote($0.value))" }.joined(separator: " ")
+        let targetDirectory = (command.workingDirectory ?? home).path
         let source = """
         #!/bin/sh
         umask 077
-        cd \(shellQuote(home.path)) || exit 1
+        cd \(shellQuote(targetDirectory)) || cd \(shellQuote(home.path)) || exit 1
         \(environment.isEmpty ? "" : "export " + environment)
         started=$(LC_ALL=C /bin/ps -p $$ -o lstart=)
         state=\(shellQuote(state.path))
@@ -154,6 +192,16 @@ final class ClientLauncher {
             try await Task.sleep(for: .milliseconds(100))
         }
         throw ProfileError("终端客户端仍在退出。请保存工作后重试。")
+    }
+
+    func isCLIRunning(_ client: Client) -> Bool {
+        let state = record(client)
+        guard let data = try? PrivateFiles.read(state), let text = String(data: data, encoding: .utf8) else { return false }
+        let fields = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard fields.count >= 2, let pid = pid_t(fields[0]), pid > 1 else { return false }
+        let launched = fields[1].trimmingCharacters(in: .whitespaces)
+        guard !launched.isEmpty, startTime(pid: pid) == launched else { return false }
+        return kill(pid, 0) == 0
     }
 
     private func record(_ client: Client) -> URL {

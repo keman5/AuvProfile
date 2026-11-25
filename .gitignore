@@ -3,3 +3,4 @@
 config/target/
 .DS_Store
 .swiftpm/
+/design-demos/
