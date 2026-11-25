@@ -1,0 +1,5 @@
+.artifacts/
+.build/
+config/target/
+.DS_Store
+.swiftpm/
