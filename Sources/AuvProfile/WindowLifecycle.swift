@@ -3,11 +3,30 @@ import SwiftUI
 
 @MainActor
 final class WindowLifecycle: NSObject, NSApplicationDelegate, NSWindowDelegate, ObservableObject {
+    static let hideDockDefaultsKey = "settings.hideDockOnClose"
     @Published private(set) var showsTabFocus = false
     private var focusMonitor: Any?
     private weak var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var profilePanel: MenuBarPanel?
+
+    var hideDockOnClose: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: Self.hideDockDefaultsKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: Self.hideDockDefaultsKey)
+        }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.hideDockDefaultsKey)
+            if !newValue {
+                NSApp.setActivationPolicy(.regular)
+            } else if mainWindow?.isVisible != true {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NotificationCenter.default.addObserver(
@@ -117,7 +136,9 @@ final class WindowLifecycle: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     @objc private func mainWindowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        if hideDockOnClose {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }
 

@@ -34,6 +34,7 @@ struct MenuBarProfiles: View {
     let openMainWindow: (Client, MainWindowAction) -> Void
     let closePanel: () -> Void
     @State private var client = Client.codex
+    @State private var pendingProfile: Profile?
 
     private var profiles: [Profile] {
         let rows = manager.profiles[client, default: []]
@@ -46,7 +47,7 @@ struct MenuBarProfiles: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text(client == .codex ? "ChatGPT / Codex" : client.rawValue)
+                    Text(client.rawValue)
                         .font(.title3.weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
@@ -89,6 +90,24 @@ struct MenuBarProfiles: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WorkspacePalette.line))
         .onExitCommand(perform: closePanel)
+        .alert(
+            "确认启用配置？",
+            isPresented: Binding(
+                get: { pendingProfile != nil },
+                set: { if !$0 { pendingProfile = nil } }
+            ),
+            presenting: pendingProfile
+        ) { profile in
+            Button("确认启用") {
+                manager.select(profile, for: profile.client)
+                pendingProfile = nil
+            }
+            Button("取消", role: .cancel) {
+                pendingProfile = nil
+            }
+        } message: { profile in
+            Text("即将启用「\(profile.name)」（服务商：\(profile.providerBadge)）。")
+        }
     }
 
     private var tabs: some View {
@@ -176,8 +195,8 @@ struct MenuBarProfiles: View {
                     .padding(.vertical, 3)
                     .background(WorkspacePalette.enabledBackground, in: Capsule())
             } else {
-                Button("启用") { manager.select(profile, for: profile.client) }
-                    .help(profile.client == .codex ? "启用后会重启正在运行的 Codex" : "启用此配置")
+                Button("启用") { pendingProfile = profile }
+                    .help(profile.client == .codex ? "启用后会重启正在运行的客户端" : "启用此配置")
             }
         }
         .controlSize(.small)
