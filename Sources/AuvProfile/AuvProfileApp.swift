@@ -94,10 +94,22 @@ struct AuvProfileApp: App {
                     } else {
                         mainProfileStage
                     }
-                    if isDrawerOpen && tab != .web {
-                        slideOverDrawer
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+                }
+
+                if isDrawerOpen && tab != .web {
+                    Color.black.opacity(0.36)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+                                isDrawerOpen = false
+                            }
+                        }
+                        .transition(.opacity)
+
+                    slideOverDrawer
+                        .transition(.scale(scale: 0.96).combined(with: .opacity))
+                        .zIndex(10)
                 }
             }
             .modifier(TabFocusEffect(lifecycle: lifecycle))
@@ -297,13 +309,15 @@ struct AuvProfileApp: App {
 
     private var floatingSidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "person.crop.rectangle.stack.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text("AuvProfile")
                     .font(.system(size: 14, weight: .bold))
-                Spacer()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 4)
                 Button {
                     showSettingsSheet = true
                 } label: {
@@ -317,7 +331,7 @@ struct AuvProfileApp: App {
                 .buttonStyle(.plain)
                 .help("应用设置 (⌘,)")
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 6)
             .padding(.top, 2)
 
             VStack(spacing: 5) {
@@ -330,19 +344,17 @@ struct AuvProfileApp: App {
                         tab = client
                     } label: {
                         HStack(spacing: 9) {
-                            Circle()
-                                .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.45))
-                                .frame(width: 7, height: 7)
-
-                            Image(systemName: client.icon)
-                                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                                .frame(width: 16)
+                            Image(nsImage: manager.clientAppIcon(for: client))
+                                .resizable()
+                                .interpolation(.high)
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 20, height: 20)
 
                             Text(client.rawValue)
                                 .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
 
                             Spacer(minLength: 4)
 
@@ -413,7 +425,7 @@ struct AuvProfileApp: App {
             )
         }
         .padding(12)
-        .frame(width: 184)
+        .frame(width: 196)
         .fixedSize(horizontal: true, vertical: false)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
@@ -481,7 +493,7 @@ struct AuvProfileApp: App {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "macwindow")
-                        Text("桌面端")
+                        Text("启动桌面端")
                     }
                 }
                 .buttonStyle(SecondaryPillButtonStyle())
@@ -836,316 +848,10 @@ struct AuvProfileApp: App {
             // Drawer Scrollable Body
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    // 0. Profile Name Card
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("配置名称")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        DrawerTextField(placeholder: "例如 OpenRouter 开发", text: $draft.name)
-                            .onChange(of: draft.name) { _, _ in isDirty = true }
-                    }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-
-                    // 1. Account & Auth Card
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("① 登录账号与认证")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Button("终端登录") {
-                                manager.loginClient(tab)
-                            }
-                            .buttonStyle(MiniPillButtonStyle())
-                            Button("导入文件…") {
-                                importerMode = .importIntoDraft
-                            }
-                            .buttonStyle(MiniPillButtonStyle())
-                        }
-
-                        // Custom Segmented Pill Picker (Replaces ugly NSSegmentedControl)
-                        HStack(spacing: 4) {
-                            ForEach(AuthMode.allCases) { mode in
-                                let selected = (draft.authMode == mode)
-                                Button {
-                                    draft.authMode = mode
-                                    isDirty = true
-                                } label: {
-                                    Text(mode.rawValue)
-                                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                                        .foregroundStyle(selected ? .white : .secondary)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 5.5)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(selected ? Color.accentColor : .clear)
-                                        )
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(3)
-                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-
-                        if draft.authMode == .oauth {
-                            if tab == .codex {
-                                if manager.oauthAccounts.isEmpty {
-                                    Text("暂无已保存的 OAuth 账号，请点击「终端登录」或切换为 API Key。")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Menu {
-                                        ForEach(manager.oauthAccounts) { option in
-                                            Button {
-                                                draft.oauthAccountKey = option.id
-                                                draft.oauthAccountLabel = option.label
-                                                isDirty = true
-                                            } label: {
-                                                HStack {
-                                                    Text(option.label)
-                                                    if (draft.oauthAccountKey ?? manager.oauthAccounts.first?.id) == option.id {
-                                                        Image(systemName: "checkmark")
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: "person.crop.circle")
-                                                .foregroundStyle(Color.accentColor)
-                                            Text(draft.oauthAccountLabel ?? manager.oauthAccounts.first?.label ?? "选择账号")
-                                                .font(.system(size: 12))
-                                                .lineLimit(1)
-                                            Spacer()
-                                            Image(systemName: "chevron.up.chevron.down")
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 7)
-                                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-                                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            } else {
-                                Text("复用客户端已有的 OAuth 登录会话，可点「终端登录」刷新。")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            DrawerSecureField(
-                                placeholder: tab == .codex
-                                    ? "输入 OPENAI_API_KEY (sk-...)"
-                                    : (tab == .claude ? "输入 ANTHROPIC_AUTH_TOKEN" : "输入 GEMINI_API_KEY"),
-                                text: $draft.apiKey
-                            )
-                            .onChange(of: draft.apiKey) { _, _ in isDirty = true }
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-
-                    // 2. Model Provider Card
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("② 模型服务商")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                        }
-
-                        // Preset Chips Row
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(presets(for: tab)) { preset in
-                                    let isCurrentPreset = (draft.providerId == preset.providerId && draft.baseUrl == preset.baseUrl)
-                                    Button {
-                                        draft.providerId = preset.providerId
-                                        draft.providerName = preset.providerName
-                                        draft.baseUrl = preset.baseUrl
-                                        draft.envKey = preset.envKey
-                                        if !preset.wireApi.isEmpty { draft.wireApi = preset.wireApi }
-                                        if !preset.model.isEmpty { draft.model = preset.model }
-                                        isDirty = true
-                                    } label: {
-                                        Text(preset.title)
-                                            .font(.system(size: 11, weight: isCurrentPreset ? .semibold : .regular))
-                                            .foregroundStyle(isCurrentPreset ? Color.accentColor : .secondary)
-                                            .padding(.horizontal, 9)
-                                            .padding(.vertical, 4)
-                                            .background(
-                                                Capsule()
-                                                    .fill(isCurrentPreset ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
-                                            )
-                                            .overlay(
-                                                Capsule()
-                                                    .strokeBorder(isCurrentPreset ? Color.accentColor.opacity(0.45) : .clear, lineWidth: 1)
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-
-                        if tab == .codex {
-                            HStack(spacing: 8) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("服务商 ID").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                    DrawerTextField(placeholder: "如 openrouter", text: $draft.providerId)
-                                        .onChange(of: draft.providerId) { _, _ in isDirty = true }
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("显示名称").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                    DrawerTextField(placeholder: "如 OpenRouter", text: $draft.providerName)
-                                        .onChange(of: draft.providerName) { _, _ in isDirty = true }
-                                }
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Base URL (留空使用官方默认地址)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                            DrawerTextField(placeholder: "https://...", text: $draft.baseUrl)
-                                .onChange(of: draft.baseUrl) { _, _ in isDirty = true }
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("默认模型 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                            DrawerTextField(placeholder: "例如 o3-pro / claude-sonnet-4", text: $draft.model)
-                                .onChange(of: draft.model) { _, _ in isDirty = true }
-                        }
-
-                        if tab == .codex && draft.providerId != "openai" && !draft.providerId.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("接口协议 (Wire API)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                    Spacer()
-                                    Toggle("需 OpenAI 认证", isOn: $draft.requiresOpenaiAuth)
-                                        .toggleStyle(.checkbox)
-                                        .font(.system(size: 11))
-                                        .onChange(of: draft.requiresOpenaiAuth) { _, _ in isDirty = true }
-                                }
-                                HStack(spacing: 4) {
-                                    ForEach(["responses", "chat"], id: \.self) { api in
-                                        let selected = (draft.wireApi == api)
-                                        Button {
-                                            draft.wireApi = api
-                                            isDirty = true
-                                        } label: {
-                                            Text(api)
-                                                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                                                .foregroundStyle(selected ? .white : .secondary)
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 4.5)
-                                                .background(
-                                                    RoundedRectangle(cornerRadius: 6)
-                                                        .fill(selected ? Color.accentColor : .clear)
-                                                )
-                                                .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                                .padding(3)
-                                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("服务商环境变量名 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                DrawerTextField(placeholder: "如 OPENROUTER_API_KEY", text: $draft.envKey)
-                                    .onChange(of: draft.envKey) { _, _ in isDirty = true }
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Bearer Token (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                DrawerSecureField(placeholder: "experimental_bearer_token", text: $draft.bearerToken)
-                                    .onChange(of: draft.bearerToken) { _, _ in isDirty = true }
-                            }
-                        }
-
-                        if tab == .antigravity {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Cloud Project (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                                DrawerTextField(placeholder: "GOOGLE_CLOUD_PROJECT", text: $draft.cloudProject)
-                                    .onChange(of: draft.cloudProject) { _, _ in isDirty = true }
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
-
-                    // 3. CLI & Collapsible Raw Source Card
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("③ CLI 目录与底层源码")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Button {
-                                showRawCodeInDrawer.toggle()
-                            } label: {
-                                Text(showRawCodeInDrawer ? "收起源码 ▴" : "{ } 展开源码 ▾")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("CLI 启动工作目录").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                            HStack(spacing: 6) {
-                                DrawerTextField(placeholder: "默认主目录 (~)", text: $draft.workingDirectoryPath)
-                                    .onChange(of: draft.workingDirectoryPath) { _, _ in isDirty = true }
-                                Button("选择…") {
-                                    importerMode = .pickDraftWorkingDirectory
-                                }
-                                .buttonStyle(MiniPillButtonStyle())
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("附加 CLI 参数 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                            DrawerTextField(placeholder: "例如 --verbose", text: $draft.extraCLIArgs)
-                                .onChange(of: draft.extraCLIArgs) { _, _ in isDirty = true }
-                        }
-
-                        if showRawCodeInDrawer {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(tab == .codex ? "config.toml" : "settings.json")
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button("同步表单到源码") {
-                                        if let synced = try? manager.synthesizeConfigText(for: draft) {
-                                            draft.configText = synced
-                                        }
-                                    }
-                                    .buttonStyle(MiniPillButtonStyle())
-                                    if tab != .codex {
-                                        Button("格式化") { formatDraftJSON() }
-                                            .buttonStyle(MiniPillButtonStyle())
-                                    }
-                                }
-                                CodeTextEditor(text: Binding(
-                                    get: { draft.configText },
-                                    set: { val in
-                                        draft.configText = val
-                                        isDirty = true
-                                    }
-                                ))
-                                .frame(height: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.14), lineWidth: 1))
-                            }
-                            .padding(.top, 2)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                    drawerNameSection
+                    drawerAccountSection
+                    drawerProviderSection
+                    drawerCLISection
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity)
@@ -1186,18 +892,335 @@ struct AuvProfileApp: App {
                 }
                 .buttonStyle(PrimaryPillButtonStyle())
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
         }
-        .frame(width: 356)
+        .frame(width: 500)
+        .frame(maxHeight: 540)
         .fixedSize(horizontal: true, vertical: false)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.96), in: RoundedRectangle(cornerRadius: 16))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
         )
-        .padding(.vertical, 12)
-        .padding(.trailing, 12)
+        .shadow(color: Color.black.opacity(0.32), radius: 28, y: 12)
+        .padding(24)
+    }
+
+    private var drawerNameSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("配置名称")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            DrawerTextField(placeholder: "例如 OpenRouter 开发", text: $draft.name)
+                .onChange(of: draft.name) { _, _ in isDirty = true }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var drawerAccountSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("① 登录账号与认证")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button("终端登录") {
+                    manager.loginClient(tab)
+                }
+                .buttonStyle(MiniPillButtonStyle())
+                Button("导入文件…") {
+                    importerMode = .importIntoDraft
+                }
+                .buttonStyle(MiniPillButtonStyle())
+            }
+
+            HStack(spacing: 4) {
+                ForEach(AuthMode.allCases) { mode in
+                    let selected = (draft.authMode == mode)
+                    Button {
+                        draft.authMode = mode
+                        isDirty = true
+                    } label: {
+                        Text(mode.rawValue)
+                            .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? .white : .secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5.5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selected ? Color.accentColor : .clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(3)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+
+            if draft.authMode == .oauth {
+                if tab == .codex {
+                    if manager.oauthAccounts.isEmpty {
+                        Text("暂无已保存的 OAuth 账号，请点击「终端登录」或切换为 API Key。")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        let currentKey = draft.oauthAccountKey ?? manager.oauthAccounts.first?.id
+                        let currentLabel = draft.oauthAccountLabel ?? manager.oauthAccounts.first?.label ?? "选择账号"
+                        Menu {
+                            ForEach(manager.oauthAccounts) { option in
+                                Button {
+                                    draft.oauthAccountKey = option.id
+                                    draft.oauthAccountLabel = option.label
+                                    isDirty = true
+                                } label: {
+                                    HStack {
+                                        Text(option.label)
+                                        if currentKey == option.id {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "person.crop.circle")
+                                    .foregroundStyle(Color.accentColor)
+                                Text(currentLabel)
+                                    .font(.system(size: 12))
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    Text("复用客户端已有的 OAuth 登录会话，可点「终端登录」刷新。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                DrawerSecureField(
+                    placeholder: tab == .codex
+                        ? "输入 OPENAI_API_KEY (sk-...)"
+                        : (tab == .claude ? "输入 ANTHROPIC_AUTH_TOKEN" : "输入 GEMINI_API_KEY"),
+                    text: $draft.apiKey
+                )
+                .onChange(of: draft.apiKey) { _, _ in isDirty = true }
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var drawerProviderSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("② 模型服务商")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(presets(for: tab)) { preset in
+                        let isCurrentPreset = (draft.providerId == preset.providerId && draft.baseUrl == preset.baseUrl)
+                        Button {
+                            draft.providerId = preset.providerId
+                            draft.providerName = preset.providerName
+                            draft.baseUrl = preset.baseUrl
+                            draft.envKey = preset.envKey
+                            if !preset.wireApi.isEmpty { draft.wireApi = preset.wireApi }
+                            if !preset.model.isEmpty { draft.model = preset.model }
+                            isDirty = true
+                        } label: {
+                            Text(preset.title)
+                                .font(.system(size: 11, weight: isCurrentPreset ? .semibold : .regular))
+                                .foregroundStyle(isCurrentPreset ? Color.accentColor : .secondary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(isCurrentPreset ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(isCurrentPreset ? Color.accentColor.opacity(0.45) : .clear, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if tab == .codex {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("服务商 ID").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        DrawerTextField(placeholder: "如 openrouter", text: $draft.providerId)
+                            .onChange(of: draft.providerId) { _, _ in isDirty = true }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("显示名称").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        DrawerTextField(placeholder: "如 OpenRouter", text: $draft.providerName)
+                            .onChange(of: draft.providerName) { _, _ in isDirty = true }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Base URL (留空使用官方默认地址)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                DrawerTextField(placeholder: "https://...", text: $draft.baseUrl)
+                    .onChange(of: draft.baseUrl) { _, _ in isDirty = true }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("默认模型 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                DrawerTextField(placeholder: "例如 o3-pro / claude-sonnet-4", text: $draft.model)
+                    .onChange(of: draft.model) { _, _ in isDirty = true }
+            }
+
+            if tab == .codex && draft.providerId != "openai" && !draft.providerId.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("接口协议 (Wire API)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        Spacer()
+                        Toggle("需 OpenAI 认证", isOn: $draft.requiresOpenaiAuth)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 11))
+                            .onChange(of: draft.requiresOpenaiAuth) { _, _ in isDirty = true }
+                    }
+                    HStack(spacing: 4) {
+                        ForEach(["responses", "chat"], id: \.self) { api in
+                            let selected = (draft.wireApi == api)
+                            Button {
+                                draft.wireApi = api
+                                isDirty = true
+                            } label: {
+                                Text(api)
+                                    .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                                    .foregroundStyle(selected ? .white : .secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4.5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(selected ? Color.accentColor : .clear)
+                                    )
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(3)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("服务商环境变量名 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    DrawerTextField(placeholder: "如 OPENROUTER_API_KEY", text: $draft.envKey)
+                        .onChange(of: draft.envKey) { _, _ in isDirty = true }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Bearer Token (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    DrawerSecureField(placeholder: "experimental_bearer_token", text: $draft.bearerToken)
+                        .onChange(of: draft.bearerToken) { _, _ in isDirty = true }
+                }
+            }
+
+            if tab == .antigravity {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cloud Project (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    DrawerTextField(placeholder: "GOOGLE_CLOUD_PROJECT", text: $draft.cloudProject)
+                        .onChange(of: draft.cloudProject) { _, _ in isDirty = true }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var drawerCLISection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("③ CLI 目录与底层源码")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button {
+                    showRawCodeInDrawer.toggle()
+                } label: {
+                    Text(showRawCodeInDrawer ? "收起源码 ▴" : "{ } 展开源码 ▾")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CLI 启动工作目录").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    DrawerTextField(placeholder: "默认主目录 (~)", text: $draft.workingDirectoryPath)
+                        .onChange(of: draft.workingDirectoryPath) { _, _ in isDirty = true }
+                    Button("选择…") {
+                        importerMode = .pickDraftWorkingDirectory
+                    }
+                    .buttonStyle(MiniPillButtonStyle())
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("附加 CLI 参数 (可选)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                DrawerTextField(placeholder: "例如 --verbose", text: $draft.extraCLIArgs)
+                    .onChange(of: draft.extraCLIArgs) { _, _ in isDirty = true }
+            }
+
+            if showRawCodeInDrawer {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(tab == .codex ? "config.toml" : "settings.json")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("同步表单到源码") {
+                            if let synced = try? manager.synthesizeConfigText(for: draft) {
+                                draft.configText = synced
+                            }
+                        }
+                        .buttonStyle(MiniPillButtonStyle())
+                        if tab != .codex {
+                            Button("格式化") { formatDraftJSON() }
+                                .buttonStyle(MiniPillButtonStyle())
+                        }
+                    }
+                    CodeTextEditor(text: Binding(
+                        get: { draft.configText },
+                        set: { val in
+                            draft.configText = val
+                            isDirty = true
+                        }
+                    ))
+                    .frame(height: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.14), lineWidth: 1))
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
     }
 
     // MARK: - Application Settings Sheet

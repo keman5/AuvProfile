@@ -875,9 +875,87 @@ final class ProfileManager: ObservableObject {
         return "未启用"
     }
 
-    // MARK: - Browser Profiles
+    // MARK: - Client App Icons & Browser Profiles
+
+    func defaultBrowserAppURL() -> URL? {
+        NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://chatgpt.com/")!)
+    }
+
+    func clientAppIcon(for client: Client) -> NSImage {
+        let appURL: URL? = switch client {
+        case .codex:
+            launcher.desktop(.codex)
+        case .claude:
+            launcher.desktop(.claude)
+        case .antigravity:
+            launcher.desktop(.antigravity)
+        case .web:
+            defaultBrowserAppURL()
+        }
+        if let appURL, FileManager.default.fileExists(atPath: appURL.path) {
+            return NSWorkspace.shared.icon(forFile: appURL.path)
+        }
+        return Self.fallbackAppIcon(for: client)
+    }
+
+    private static func fallbackAppIcon(for client: Client) -> NSImage {
+        let size = NSSize(width: 64, height: 64)
+        return NSImage(size: size, flipped: true) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let inset = rect.insetBy(dx: 4, dy: 4)
+            let path = CGPath(roundedRect: inset, cornerWidth: 13, cornerHeight: 13, transform: nil)
+            ctx.saveGState()
+            ctx.addPath(path)
+            ctx.clip()
+
+            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+            let (c1, c2): (CGColor, CGColor) = switch client {
+            case .codex:
+                (
+                    CGColor(colorSpace: colorSpace, components: [0.06, 0.64, 0.50, 1.0])!,
+                    CGColor(colorSpace: colorSpace, components: [0.04, 0.45, 0.36, 1.0])!
+                )
+            case .claude:
+                (
+                    CGColor(colorSpace: colorSpace, components: [0.85, 0.47, 0.34, 1.0])!,
+                    CGColor(colorSpace: colorSpace, components: [0.72, 0.34, 0.22, 1.0])!
+                )
+            case .antigravity:
+                (
+                    CGColor(colorSpace: colorSpace, components: [0.31, 0.27, 0.90, 1.0])!,
+                    CGColor(colorSpace: colorSpace, components: [0.15, 0.39, 0.92, 1.0])!
+                )
+            case .web:
+                (
+                    CGColor(colorSpace: colorSpace, components: [0.15, 0.60, 0.95, 1.0])!,
+                    CGColor(colorSpace: colorSpace, components: [0.10, 0.40, 0.85, 1.0])!
+                )
+            }
+            var locations: [CGFloat] = [0.0, 1.0]
+            if let grad = CGGradient(colorsSpace: colorSpace, colors: [c1, c2] as CFArray, locations: &locations) {
+                ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 64, y: 64), options: [])
+            }
+            ctx.restoreGState()
+
+            if let symbol = NSImage(systemSymbolName: client.icon, accessibilityDescription: client.rawValue) {
+                let config = NSImage.SymbolConfiguration(pointSize: 26, weight: .bold)
+                    .applying(.init(paletteColors: [.white]))
+                if let configured = symbol.withSymbolConfiguration(config) {
+                    let sSize = configured.size
+                    let origin = CGPoint(x: (64 - sSize.width) / 2, y: (64 - sSize.height) / 2)
+                    configured.draw(in: CGRect(origin: origin, size: sSize))
+                }
+            }
+            return true
+        }
+    }
 
     private func browserProfiles() -> [Profile] {
+        let defaultApp = defaultBrowserAppURL()
+        let defaultBrowserName = defaultApp?.deletingPathExtension().lastPathComponent ?? "默认浏览器"
+        let lastBrowser = preferences.string(forKey: "last.browser")
+        let aliases = preferences.dictionary(forKey: "profile.aliases") as? [String: String] ?? [:]
+
         let applicationSupport = home.appending(path: "Library/Application Support")
         let browsers = [
             ("Google Chrome", "Google/Chrome"),
@@ -885,10 +963,8 @@ final class ProfileManager: ObservableObject {
             ("Brave Browser", "BraveSoftware/Brave-Browser"),
             ("Arc", "Arc/User Data"),
         ]
-        let lastBrowser = preferences.string(forKey: "last.browser")
-        let aliases = preferences.dictionary(forKey: "profile.aliases") as? [String: String] ?? [:]
 
-        return browsers.flatMap { name, directory -> [Profile] in
+        var results = browsers.flatMap { name, directory -> [Profile] in
             guard let app = launcher.application(named: name) else { return [] }
             let stateFile = applicationSupport.appending(path: directory).appending(path: "Local State")
             let mtime = (try? stateFile.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
@@ -896,6 +972,7 @@ final class ProfileManager: ObservableObject {
                 return cached.profiles.map { item in
                     var copy = item
                     if let alias = aliases[item.id], !alias.isEmpty { copy.name = alias }
+                    copy.detail = "默认浏览器打开 (\(defaultBrowserName))"
                     copy.active = (lastBrowser == item.id)
                     return copy
                 }
@@ -907,18 +984,16 @@ final class ProfileManager: ObservableObject {
                 guard argument == "Default" || argument.hasPrefix("Profile "), !argument.contains("/"),
                       (known[argument]?["is_omitted_from_profile_list"] as? Bool) != true else { return nil }
                 let nameInBrowser = (known[argument]?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let userName = (known[argument]?["user_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let fallbackTitle = (nameInBrowser?.isEmpty == false ? nameInBrowser! : argument)
-                let subtitle = (userName?.isEmpty == false) ? "\(name) · \(userName!)" : "\(name) (\(argument))"
                 let key = name + "/" + argument
                 return Profile(
                     id: key,
                     client: .web,
                     kind: .browser,
                     name: fallbackTitle,
-                    detail: subtitle,
+                    detail: "默认浏览器打开 (\(defaultBrowserName))",
                     active: lastBrowser == key,
-                    path: app,
+                    path: defaultApp ?? app,
                     argument: argument
                 )
             }
@@ -930,6 +1005,22 @@ final class ProfileManager: ObservableObject {
                 return copy
             }
         }
+
+        if results.isEmpty {
+            let key = "default/browser"
+            let alias = aliases[key]
+            results.append(Profile(
+                id: key,
+                client: .web,
+                kind: .browser,
+                name: (alias?.isEmpty == false) ? alias! : defaultBrowserName,
+                detail: "系统默认浏览器",
+                active: lastBrowser == nil || lastBrowser == key,
+                path: defaultApp,
+                argument: "Default"
+            ))
+        }
+        return results
     }
 
     func renameBrowserProfile(_ profile: Profile, to newName: String) {
@@ -946,8 +1037,9 @@ final class ProfileManager: ObservableObject {
     }
 
     func openBrowser(_ profile: Profile, service: WebService = .chatGPT) async throws {
-        guard let browser = profile.path, let directory = profile.argument else { throw ProfileError("找不到浏览器 profile。") }
-        try await launcher.openBrowser(service.url, in: browser, profile: directory)
+        guard NSWorkspace.shared.open(service.url) else {
+            throw ProfileError("无法使用默认浏览器打开 \(service.rawValue)。")
+        }
         preferences.set(profile.id, forKey: "last.browser")
         refresh()
     }
